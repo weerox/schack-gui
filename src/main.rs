@@ -8,6 +8,7 @@ use nalgebra as na;
 use std::env;
 use std::path;
 use schackmotor::{Board, PieceType};
+use ggez::event::MouseButton;
 
 struct GameState {
     text: graphics::Text,
@@ -19,14 +20,14 @@ struct GameState {
 
 impl GameState {
     fn new(ctx: &mut Context) -> GameResult<GameState> {
-        graphics::set_resizable(ctx, false);
-        graphics::set_window_title(ctx, "Schack");
-        //graphics::set_drawable_size(ctx, 800 as f32, 650 as f32);
-
         let chess_board = Board::new(Board::get_standard_layout());
         let font = graphics::Font::new(ctx, "/STD.ttf")?;
         let text = graphics::Text::new(("RrNnBbQqKkPp\n123456789\n!\"-#$%&'.()*+,S", font, 48.0));
         let canvas = graphics::Canvas::with_window_size(ctx)?;
+
+        graphics::set_drawable_size(ctx, 800 as f32, 600 as f32);
+        graphics::set_resizable(ctx, false);
+        graphics::set_window_title(ctx, "Schack");
 
         let mut s = GameState {
             text,
@@ -61,10 +62,10 @@ impl GameState {
             }
         }
 
-        out[0][0] = "7".to_string();
-        out[9][0] = "1".to_string();
-        out[0][9] = "9".to_string();
-        out[9][9] = "3".to_string();
+        out[0][0] = "7".to_string(); //Top left corner
+        out[9][0] = "1".to_string(); //Bottom left corner
+        out[0][9] = "9".to_string(); //Top right corner
+        out[9][9] = "3".to_string(); //Bottom right corner
 
         for range in 1..9 {
             out[0][range] = "8".to_string();
@@ -181,6 +182,14 @@ impl event::EventHandler for GameState {
         }
 
         Ok(())
+    }
+
+    fn mouse_button_up_event(&mut self, _ctx: &mut Context, button: MouseButton, x: f32, y: f32) {
+        if button == MouseButton::Left {
+            println!("Clicked on tile {}, {}", ((((x - 55f32)/43f32).floor() + 97f32) as u8) as char, 8f32 - ((y-60f32)/48f32).floor());
+
+        }
+        println!("Mouse button released: {:?}, x: {}, y: {}", button, x, y);
     }
 
     fn key_down_event(

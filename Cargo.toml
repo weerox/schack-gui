@@ -1,7 +1,7 @@
 [package]
 name = "schack_gui"
 version = "0.1.0"
-authors = ["Apan145 <apan1451@gmail.com>"]
+authors = ["eskilq <eskilq@kth.se>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -9,4 +9,3 @@ edition = "2018"
 [dependencies]
 schackmotor = { path = "../schackmotor" }
 ggez = "0.5"
-nalgebra = "0.18"

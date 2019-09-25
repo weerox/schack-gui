@@ -1672,12 +1672,13 @@ name = "schack_gui"
 version = "0.1.0"
 dependencies = [
  "ggez 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "schackmotor 0.1.0",
+ "schackmotor 0.1.0 (git+https://github.com/inda19plusplus/schack.git)",
 ]
 
 [[package]]
 name = "schackmotor"
 version = "0.1.0"
+source = "git+https://github.com/inda19plusplus/schack.git#bea3b18223d6a540455bda87f458ae69459e0061"
 
 [[package]]
 name = "scopeguard"
@@ -2413,6 +2414,7 @@ dependencies = [
 "checksum rusty-xinput 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "d2aa654bc32eb9ca14cce1a084abc9dfe43949a4547c35269a094c39272db3bb"
 "checksum ryu 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "c92464b447c0ee8c4fb3824ecc8383b81717b9f1e74ba2e72540aef7b9f82997"
 "checksum same-file 1.0.5 (registry+https://github.com/rust-lang/crates.io-index)" = "585e8ddcedc187886a30fa705c47985c3fa88d06624095856b36ca0b82ff4421"
+"checksum schackmotor 0.1.0 (git+https://github.com/inda19plusplus/schack.git)" = "<none>"
 "checksum scopeguard 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "b42e15e59b18a828bbf5c58ea01debb36b9b096346de35d941dcb89009f24a0d"
 "checksum semver 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)" = "1d7eb9ef2c18661902cc47e535f9bc51b78acd254da71d375c2f6720d9a40403"
 "checksum semver-parser 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)" = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"

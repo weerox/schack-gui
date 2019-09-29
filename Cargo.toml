@@ -7,5 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-schackmotor = { git = "https://github.com/inda19plusplus/schack.git" }
+schackmotor = { path = "../schackmotor" }
 ggez = "0.5"
+tiny_http = "0.6.2"
+reqwest = "0.9.20"

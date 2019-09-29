@@ -1,11 +1,14 @@
+mod network;
+
 use ggez::event;
-use ggez::graphics::{self, Color, DrawParam, DrawMode, Drawable};
+use ggez::graphics::{self, DrawParam, DrawMode};
 use ggez::{Context, GameResult};
-use std::env;
+use ggez::event::{MouseButton, KeyCode};
+use std::{env};
 use std::path;
 use schackmotor::{Board, PieceType, Position};
-use ggez::event::{MouseButton, KeyCode};
-use ggez::nalgebra::{Vector2, Point2};
+use crate::network::NetworkHandler;
+use std::sync::{Mutex, Arc};
 
 const GRID_SIZE: (i16, i16) = (8, 8);
 const GRID_CELL_SIZE: (i16, i16) = (45, 45);
@@ -27,15 +30,6 @@ impl GridPosition {
             x: pos.get_x() as i32 - 1,
             y: (8 - pos.get_y()) as i32,
         }
-    }
-
-    fn to_rect(&self) -> graphics::Rect {
-        graphics::Rect::new_i32(
-            self.x * GRID_CELL_SIZE.0 as i32,
-            self.y * GRID_CELL_SIZE.1 as i32,
-            GRID_CELL_SIZE.0 as i32,
-            GRID_CELL_SIZE.1 as i32,
-        )
     }
 }
 
@@ -102,21 +96,159 @@ impl MarkedTile {
     }
 }
 
-struct GameState {
+struct InputHandler {
+    clicked_tile: Option<Position>,
+    clicked_tile_2: Option<Position>,
+}
+
+impl InputHandler {
+    fn new() -> Self {
+        InputHandler {
+            clicked_tile: None,
+            clicked_tile_2: None
+        }
+    }
+
+    fn reset_clicked_squares(&mut self) {
+        self.clicked_tile = None;
+        self.clicked_tile_2 = None;
+    }
+
+    fn clicked_at(&mut self, ctx: &mut Context, button: MouseButton, x: f32, y: f32, data_handler: &mut DataHandler, graphics_handler: &mut GraphicsHandler) {
+        if button == MouseButton::Left && self.clicked_tile_2.is_none() {
+            let clicked_position: schackmotor::Position = GridPosition { x: (x / GRID_CELL_SIZE.0 as f32).floor() as i32, y: (y / GRID_CELL_SIZE.1 as f32).floor() as i32 }.into();
+
+            if self.clicked_tile.is_none() {
+                if let Some(moves) = data_handler.moves_from_position(clicked_position){
+                    self.clicked_tile = Some(clicked_position);
+                    for mov in moves {
+                        graphics_handler.add_marked_tile(mov.0);
+                    }
+                }
+            } else if data_handler.can_move_piece_at_position(clicked_position) {
+                self.clicked_tile = Some(clicked_position);
+
+                if let Some(moves) = data_handler.moves_from_position(clicked_position){
+                    self.clicked_tile = Some(clicked_position);
+                    graphics_handler.clear_marks();
+                    for mov in moves {
+                        graphics_handler.add_marked_tile(mov.0);
+                    }
+                }
+            } else {
+                let (moves, promotes) = data_handler.piece_at_position_can_move_to(self.clicked_tile.unwrap(), clicked_position);
+
+                if moves {
+                    if promotes {
+                        self.clicked_tile_2 = Some(clicked_position);
+                    } else {
+                        self.forward_move(ctx, format!("{}-{}", self.clicked_tile.unwrap(), clicked_position), data_handler, graphics_handler);
+
+                    }
+                } else {
+                    self.clicked_tile = None;
+                    graphics_handler.clear_marks();
+                }
+            }
+        }
+    }
+
+    fn key_pressed(&mut self, ctx: &mut Context, keycode: ggez::event::KeyCode, data_handler: &mut DataHandler, graphics_handler: &mut GraphicsHandler) {
+        if self.clicked_tile_2.is_some() {
+            match keycode {
+                KeyCode::Q => {
+                    self.forward_move(ctx, format!("{}-{}=Q", self.clicked_tile.unwrap(), self.clicked_tile_2.unwrap()), data_handler, graphics_handler);
+                }
+                KeyCode::R => {
+                    self.forward_move(ctx, format!("{}-{}=R", self.clicked_tile.unwrap(), self.clicked_tile_2.unwrap()), data_handler, graphics_handler);
+                }
+                KeyCode::B => {
+                    self.forward_move(ctx, format!("{}-{}=B", self.clicked_tile.unwrap(), self.clicked_tile_2.unwrap()), data_handler, graphics_handler);
+                }
+                KeyCode::N => {
+                    self.forward_move(ctx, format!("{}-{}=N", self.clicked_tile.unwrap(), self.clicked_tile_2.unwrap()), data_handler, graphics_handler);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn forward_move(&mut self, ctx: &mut Context, mov: String, data_handler: &mut DataHandler, graphics_handler: &mut GraphicsHandler) {
+        data_handler.take_move(mov);
+        graphics_handler.update_board(data_handler, ctx);
+        self.reset_clicked_squares();
+    }
+}
+
+struct DataHandler {
+    board: Board,
+    gameover: schackmotor::GameState,
+}
+
+impl DataHandler {
+    fn new(board: Board) -> Self {
+        DataHandler {
+            board,
+            gameover: schackmotor::GameState::Normal
+        }
+    }
+
+    fn update_game_state(&mut self) {
+        self.gameover = self.board.get_game_state();
+    }
+
+    fn take_move(&mut self, mov: String) {
+        self.board.take_move(mov);
+        self.update_game_state();
+
+        //Transmit the move to the other client
+    }
+
+    fn moves_from_position(&self, position: schackmotor::Position) -> Option<Vec<(Position, bool)>> {
+        self.board.get_possible_moves_from_position(position)
+    }
+
+    fn can_move_piece_at_position(&self, position: schackmotor::Position) -> bool {
+        if self.board.get_piece_at(position).is_none() {
+            return false;
+        }
+        self.board.get_piece_at(position).unwrap().get_color() == self.board.get_current_player()
+    }
+
+    fn piece_at_position_can_move_to(&self, start_position: schackmotor::Position, end_position: schackmotor::Position) -> (bool, bool) {
+        if let Some(moves) = self.moves_from_position(start_position) {
+            for mov in moves {
+                if mov.0 == end_position {
+                    return (true, mov.1);
+                }
+            }
+        }
+        (false, false)
+    }
+}
+
+struct GraphicsHandler {
     sprites: Vec<((schackmotor::Color, schackmotor::PieceType), String)>,
     tiles: Vec<Tile>,
     graphics_pieces: Vec<GraphicsPiece>,
     marks: Vec<MarkedTile>,
-    board: Board,
-    clicked_tile: Option<Position>,
-    clicked_tile_2: Option<Position>,
-    gameover: Option<schackmotor::Color>,
 }
 
-impl GameState {
-    fn new(ctx: &mut Context) -> GameResult<GameState> {
-        let sprites = GameState::load_sprites();
+impl GraphicsHandler {
+    fn new(data_handler: &DataHandler, ctx: &mut Context) -> Self {
+        let mut out = GraphicsHandler {
+            sprites: GraphicsHandler::load_sprites(),
+            tiles: Vec::new(),
+            graphics_pieces: Vec::new(),
+            marks: Vec::new()
+        };
 
+        out.populate_from_data(data_handler, ctx);
+
+        out
+    }
+
+    fn populate_from_data(&mut self, data_handler: &DataHandler, ctx: &mut Context) {
         let mut tiles = Vec::new();
         for x in 0..8 {
             for y in 0..8 {
@@ -127,37 +259,14 @@ impl GameState {
             }
         }
 
-        let board = Board::new(Board::get_standard_layout());
-        let mut graphics_pieces = Vec::new();
-        let pieces = board.get_pieces();
+        self.tiles = tiles;
 
-        for piece in pieces {
-            graphics_pieces.push(GraphicsPiece {
-                sprite: graphics::Image::new(ctx, sprites.iter()
-                    .find(|element| (element.0).0 == piece.get_color() && (element.0).1 == piece.get_type()).unwrap().1.clone())?,
-                position: GridPosition::from(piece.get_position()),
-            });
-        }
-
-        let marks = Vec::new();
-
-        let mut state = GameState {
-            sprites,
-            tiles,
-            graphics_pieces,
-            board,
-            marks,
-            clicked_tile: None,
-            clicked_tile_2: None,
-            gameover: None,
-        };
-
-        Ok(state)
+        self.update_board(data_handler, ctx);
     }
 
-    fn update_board(&mut self, ctx: &mut Context) {
+    fn update_board(&mut self, data_handler: &DataHandler, ctx: &mut Context) {
         let mut graphics_pieces = Vec::new();
-        let pieces = self.board.get_pieces();
+        let pieces = data_handler.board.get_pieces();
 
         for piece in pieces {
             graphics_pieces.push(GraphicsPiece {
@@ -170,8 +279,6 @@ impl GameState {
         self.graphics_pieces = graphics_pieces;
 
         self.marks.clear();
-        self.clicked_tile = None;
-        self.clicked_tile_2 = None;
     }
 
     fn load_sprites() -> Vec<((schackmotor::Color, schackmotor::PieceType), String)> {
@@ -191,36 +298,37 @@ impl GameState {
         sprites
     }
 
-    fn check_for_gameover(&mut self, ctx: &mut Context) {
-        if self.board.get_current_player_moves().iter().map(|element| element.1.len())
-            .fold(0, |acc, element| acc + element) == 0 {
-            self.gameover = Some(self.board.get_current_player().invert());
-        }
-    }
-}
-
-impl event::EventHandler for GameState {
-    fn update(&mut self, _ctx: &mut Context) -> GameResult {
-        Ok(())
-    }
-
-    fn draw(&mut self, ctx: &mut Context) -> GameResult {
+    fn draw(&mut self, gamestate: &schackmotor::GameState, ctx: &mut Context) -> GameResult {
         graphics::clear(ctx, [0.5, 0.5, 0.5, 1.0].into());
 
         for tile in &self.tiles {
-            tile.draw(ctx);
+            tile.draw(ctx)?;
         }
 
         for graphics_piece in &self.graphics_pieces {
-            graphics_piece.draw(ctx);
+            graphics_piece.draw(ctx)?;
         }
 
         for mark in &self.marks {
-            mark.draw(ctx);
+            mark.draw(ctx)?;
         }
 
-        if self.gameover.is_some() {
-            let gg_text = graphics::Text::new(graphics::TextFragment::from(format!("{} has won", self.gameover.unwrap()))
+        let mut middle_of_screen_text = true;
+        let mut text: String = "".to_string();
+        match gamestate {
+            schackmotor::GameState::Normal | schackmotor::GameState::Check(_) => {
+                middle_of_screen_text = false
+            }
+            schackmotor::GameState::Checkmate(color) => {
+                text = format!("{} has won", color);
+            }
+            schackmotor::GameState::Draw => {
+                text = "Draw".to_string();
+            }
+        }
+
+        if middle_of_screen_text {
+            let gg_text = graphics::Text::new(graphics::TextFragment::from(text)
                 .scale(graphics::Scale { x: 45.0, y: 45.0 }));
             let gg_dimensions = gg_text.dimensions(ctx);
             let background_box = graphics::Mesh::new_rectangle(ctx, DrawMode::fill(),
@@ -236,98 +344,68 @@ impl event::EventHandler for GameState {
                 }));
         }
 
+        Ok(())
+    }
+
+    fn add_marked_tile(&mut self, position: schackmotor::Position) {
+        self.marks.push(MarkedTile::new(position));
+    }
+
+    fn clear_marks(&mut self) {
+        self.marks.clear();
+    }
+}
+
+struct GameState {
+    data_handler: Arc<Mutex<DataHandler>>,
+    graphics_handler: GraphicsHandler,
+    input_handler: InputHandler,
+    network_handler: NetworkHandler,
+    last_network_update: u128
+}
+
+impl GameState {
+    fn new(ctx: &mut Context) -> GameResult<GameState> {
+        let board = Board::new(Board::get_standard_layout());
+
+        let data_handler = Arc::new(Mutex::new(DataHandler::new(board)));
+        let graphics_handler = GraphicsHandler::new(&data_handler.lock().unwrap(), ctx);
+        let network_handler = NetworkHandler::new("127.0.0.1:7878".to_string(), data_handler.clone());
+
+        let mut state = GameState {
+            data_handler,
+            graphics_handler,
+            input_handler: InputHandler::new(),
+            network_handler,
+            last_network_update: 0
+        };
+
+        Ok(state)
+    }
+}
+
+impl event::EventHandler for GameState {
+    fn update(&mut self, _ctx: &mut Context) -> GameResult {
+
+
+        Ok(())
+    }
+
+    fn draw(&mut self, ctx: &mut Context) -> GameResult {
+        self.graphics_handler.draw(&self.data_handler.lock().unwrap().gameover, ctx)?;
+
         graphics::present(ctx)?;
 
         Ok(())
     }
 
     fn mouse_button_up_event(&mut self, ctx: &mut Context, button: MouseButton, x: f32, y: f32) {
-        if button == MouseButton::Left && self.clicked_tile_2.is_none() {
-            let clicked_position: schackmotor::Position = GridPosition { x: (x / GRID_CELL_SIZE.0 as f32).floor() as i32, y: (y / GRID_CELL_SIZE.1 as f32).floor() as i32 }.into();
+        self.input_handler.clicked_at(ctx, button, x, y, &mut self.data_handler.lock().unwrap(), &mut self.graphics_handler);
 
-            if self.clicked_tile.is_none() {
-                for piece in self.board.get_current_player_moves() {
-                    if piece.0.get_position() == clicked_position {
-                        self.clicked_tile = Some(clicked_position);
-                        for moves in piece.1 {
-                            self.marks.push(MarkedTile::new(moves.0));
-                        }
-                    }
-                }
-            } else if self.board.get_pieces().iter()
-                .find(|piece| piece.get_color() == self.board.get_current_player() && piece.get_position() == clicked_position)
-                .is_some() {
-                self.clicked_tile = Some(clicked_position);
-
-                for piece in self.board.get_current_player_moves() {
-                    if piece.0.get_position() == clicked_position {
-                        self.clicked_tile = Some(clicked_position);
-                        self.marks.clear();
-                        for moves in piece.1 {
-                            self.marks.push(MarkedTile::new(moves.0));
-                        }
-                    }
-                }
-            } else {
-                let moves = self.board.get_current_player_moves();
-                let mut maybe_move: Option<String> = None;
-                let mut no_move = true;
-                for mov in moves {
-                    if mov.0.get_position() == self.clicked_tile.unwrap() {
-                        for tup in mov.1 {
-                            if tup.0 == clicked_position && tup.1 && mov.0.get_type().is_pawn() {
-                                self.clicked_tile_2 = Some(clicked_position);
-                                no_move = false;
-                            } else if tup.0 == clicked_position && !tup.1 {
-                                maybe_move = Some(format!("{}-{}", self.clicked_tile.unwrap(), clicked_position));
-                                no_move = false;
-                            }
-                        }
-                    }
-                }
-                if maybe_move.is_some() {
-                    self.board.take_move(maybe_move.unwrap());
-                    self.update_board(ctx);
-                    self.check_for_gameover(ctx);
-                }
-                if no_move {
-                    self.clicked_tile = None;
-                    self.marks.clear();
-                }
-            }
-        }
     }
 
-    fn key_down_event(&mut self, ctx: &mut Context, keycode: ggez::event::KeyCode, _keymod: ggez::event::KeyMods, repeat: bool) {
-        if self.clicked_tile_2.is_some() {
-            match keycode {
-                KeyCode::Q => {
-                    println!("{:?}, {:?}", self.clicked_tile, self.clicked_tile_2);
-                    self.board.take_move(format!("{}-{}=Q", self.clicked_tile.unwrap(), self.clicked_tile_2.unwrap()));
-                    self.update_board(ctx);
-                    self.check_for_gameover(ctx);
-                }
-                KeyCode::R => {
-                    self.board.take_move(format!("{}-{}=R", self.clicked_tile.unwrap(), self.clicked_tile_2.unwrap()));
-                    self.update_board(ctx);
-                    self.check_for_gameover(ctx);
-                }
-                KeyCode::B => {
-                    self.board.take_move(format!("{}-{}=B", self.clicked_tile.unwrap(), self.clicked_tile_2.unwrap()));
-                    self.update_board(ctx);
-                    self.check_for_gameover(ctx);
-                }
-                KeyCode::N => {
-                    self.board.take_move(format!("{}-{}=N", self.clicked_tile.unwrap(), self.clicked_tile_2.unwrap()));
-                    self.update_board(ctx);
-                    self.check_for_gameover(ctx);
-                }
-                _ => {}
-            }
-        }
-        if self.board.get_current_player_moves().len() == 0 {
-            println!("ggez {}", self.board.get_current_player());
-        }
+    fn key_down_event(&mut self, ctx: &mut Context, keycode: ggez::event::KeyCode, _keymod: ggez::event::KeyMods, _repeat: bool) {
+        self.input_handler.key_pressed(ctx, keycode, &mut self.data_handler.lock().unwrap(), &mut self.graphics_handler);
     }
 }
 

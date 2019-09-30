@@ -19,6 +19,14 @@ impl NetworkHandler {
         self.target_address.clone()
     }
 
+    pub(crate) fn get_local_player_color(&self) -> Option<schackmotor::Color> {
+        self.local_color.lock().unwrap().clone()
+    }
+
+    pub(crate) fn set_local_color(&mut self, color: schackmotor::Color) {
+        *self.local_color.lock().unwrap() = Some(color);
+    }
+
     pub(crate) fn new(target_address: String, data_handler: Arc<Mutex<DataHandler>>) -> Self {
         let mut out = NetworkHandler {
             client: reqwest::Client::new(),
@@ -87,6 +95,7 @@ impl NetworkHandler {
                         } else if url == "/move" {
                             if regex_for_start_square.is_match(request_text.as_ref())
                                 && regex_for_end_square.is_match(request_text.as_ref()) {
+
                                 let start_square = regex_for_square_extraction.captures(
                                     regex_for_start_square.captures(request_text.as_ref()).unwrap()
                                         .get(0).unwrap().as_str()).unwrap().get(0).unwrap().as_str();
@@ -94,17 +103,21 @@ impl NetworkHandler {
                                     regex_for_end_square.captures(request_text.as_ref()).unwrap()
                                         .get(0).unwrap().as_str()).unwrap().get(0).unwrap().as_str();
                                 let res;
+
                                 if regex_for_promotion.is_match(request_text.as_ref()) {
                                     let promotes_to = regex_for_promotion_extraction.captures(
                                         regex_for_promotion.captures(request_text.as_ref())
                                             .unwrap().get(0).unwrap().as_str()).unwrap()
                                         .get(0).unwrap().as_str();
+
                                     res = data_handler2.lock().unwrap().receive_move(
                                         NotatedMove::new(start_square.to_string(), end_square.to_string(),
-                                                         Some(promotes_to.to_string())));
+                                                         Some(promotes_to.to_string())), local_color_ref.lock().unwrap().unwrap());
+
                                 } else {
                                     res = data_handler2.lock().unwrap().receive_move(
-                                        NotatedMove::new(start_square.to_string(), end_square.to_string(), None));
+                                        NotatedMove::new(start_square.to_string(), end_square.to_string(), None),
+                                        local_color_ref.lock().unwrap().unwrap());
                                 }
 
                                 match res {

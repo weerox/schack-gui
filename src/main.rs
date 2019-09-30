@@ -11,6 +11,7 @@ use crate::network::NetworkHandler;
 use std::sync::{Mutex, Arc};
 use std::ops::Deref;
 use std::fmt::{Formatter};
+use std::io::BufRead;
 
 const GRID_SIZE: (i16, i16) = (8, 8);
 const GRID_CELL_SIZE: (i16, i16) = (45, 45);
@@ -256,18 +257,25 @@ impl DataHandler {
     }
 
     fn take_move<T: Deref<Target = NetworkHandler>>(&mut self, mov: NotatedMove, network_handler: T) -> Result<(), String> {
-        self.receive_move(mov.clone())?;
+        if network_handler.get_local_player_color().is_none() {
+            return Err("No opponent".to_string());
+        }
+
+        self.receive_move(mov.clone(), network_handler.get_local_player_color().unwrap().invert())?;
 
         println!("{}\n{}", mov.jsonify(), network_handler.get_target_address());
 
         //Transmit the move to the other client
-        //network_handler.send("http://192.168.0.48:7878/move", mov);
         network_handler.send(format!("http://{}/move", network_handler.get_target_address()).as_str(), mov.jsonify());
 
         Ok(())
     }
 
-    fn receive_move(&mut self, mov: NotatedMove) -> Result<(), String> {
+    fn receive_move(&mut self, mov: NotatedMove, this_players_color: schackmotor::Color) -> Result<(), String> {
+        if this_players_color != self.board.get_current_player() {
+            return Err("Can't play a piece of the opponents color".to_string());
+        }
+
         self.board.take_move(mov.to_string())?;
         self.update_game_state();
         self.move_made = true;
@@ -439,23 +447,23 @@ struct GameState {
     graphics_handler: GraphicsHandler,
     input_handler: InputHandler,
     network_handler: NetworkHandler,
-    last_network_update: u128
+    last_network_update: i128
 }
 
 impl GameState {
-    fn new(ctx: &mut Context) -> GameResult<GameState> {
+    fn new(ctx: &mut Context, address: String) -> GameResult<GameState> {
         let board = Board::new(Board::get_standard_layout());
 
         let data_handler = Arc::new(Mutex::new(DataHandler::new(board)));
         let graphics_handler = GraphicsHandler::new(&data_handler.lock().unwrap(), ctx);
-        let network_handler = NetworkHandler::new("192.168.0.48:7878".to_string(), data_handler.clone());
+        let network_handler = NetworkHandler::new(address, data_handler.clone());
 
         let mut state = GameState {
             data_handler,
             graphics_handler,
             input_handler: InputHandler::new(),
             network_handler,
-            last_network_update: 0
+            last_network_update: 1
         };
 
         Ok(state)
@@ -465,6 +473,13 @@ impl GameState {
 impl event::EventHandler for GameState {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
         self.graphics_handler.update(&mut self.data_handler.lock().unwrap(), ctx);
+
+        if (self.last_network_update * 1000 - ggez::timer::time_since_start(ctx).as_millis() as i128) < 0
+        && self.network_handler.get_local_player_color().is_none(){
+            self.last_network_update += 1;
+            self.network_handler.set_local_color(schackmotor::Color::White);
+            self.network_handler.send(format!("http://{}/start-game", self.network_handler.get_target_address()).as_str(), "{\"color\":\"white\"}".to_string());
+        }
 
         Ok(())
     }
@@ -488,6 +503,9 @@ impl event::EventHandler for GameState {
 }
 
 pub fn main() -> GameResult {
+    let stdin = std::io::stdin();
+    let address = stdin.lock().lines().next().unwrap().unwrap();
+
     let resource_dir = if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
         let mut path = path::PathBuf::from(manifest_dir);
         path.push("resources");
@@ -501,6 +519,6 @@ pub fn main() -> GameResult {
         .window_mode(ggez::conf::WindowMode::default().dimensions(SCREEN_SIZE.0, SCREEN_SIZE.1).resizable(false));
     let (ctx, event_loop) = &mut cb.build()?;
 
-    let state = &mut GameState::new(ctx)?;
+    let state = &mut GameState::new(ctx, address)?;
     event::run(ctx, event_loop, state)
 }

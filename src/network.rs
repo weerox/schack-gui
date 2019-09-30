@@ -1,7 +1,8 @@
 use std::thread;
-use crate::DataHandler;
+use crate::{DataHandler, NotatedMove};
 use std::sync::{Mutex, Arc};
 use regex::Regex;
+use std::io::Read;
 
 pub(crate) struct NetworkHandler {
     client: reqwest::Client,
@@ -42,7 +43,7 @@ impl NetworkHandler {
         let address = self.target_address.clone();
 
         thread::spawn( move || {
-            let server = tiny_http::Server::http(address).unwrap();
+            let server = tiny_http::Server::http("0.0.0.0:7878").unwrap();
             let regex_for_start_square = Regex::new("\"start_square\"(\\s)*:(\\s)*\"[a-h][1-8]\"").unwrap();
             let regex_for_end_square = Regex::new("\"end_square\"(\\s)*:(\\s)*\"[a-h][1-8]\"").unwrap();
             let regex_for_promotion = Regex::new("\"promote_to\"(\\s)*:(\\s)*\"[QRBN]\"").unwrap();
@@ -58,6 +59,8 @@ impl NetworkHandler {
                 let mut request_text = "".to_string();
 
                 request.as_reader().read_to_string(&mut request_text).unwrap();
+
+                println!("{}", request_text);
 
                 match request.method() {
                     tiny_http::Method::Get => {}
@@ -96,9 +99,12 @@ impl NetworkHandler {
                                         regex_for_promotion.captures(request_text.as_ref())
                                             .unwrap().get(0).unwrap().as_str()).unwrap()
                                         .get(0).unwrap().as_str();
-                                    res = data_handler2.lock().unwrap().receive_move(format!("{}-{}={}", start_square, end_square, promotes_to));
+                                    res = data_handler2.lock().unwrap().receive_move(
+                                        NotatedMove::new(start_square.to_string(), end_square.to_string(),
+                                                         Some(promotes_to.to_string())));
                                 } else {
-                                    res = data_handler2.lock().unwrap().receive_move(format!("{}-{}", start_square, end_square));
+                                    res = data_handler2.lock().unwrap().receive_move(
+                                        NotatedMove::new(start_square.to_string(), end_square.to_string(), None));
                                 }
 
                                 match res {
@@ -141,16 +147,13 @@ impl NetworkHandler {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(reqwest::header::HOST, reqwest::header::HeaderValue::from_bytes(url.as_ref()).unwrap());
         headers.insert(reqwest::header::CONTENT_TYPE, reqwest::header::HeaderValue::from_bytes(b"text/json").unwrap());
-        let var = self.client.post(url).headers(headers).send();
+        let mut var = self.client.post(url).headers(headers).body(message).send().unwrap();
 
-        /*let mut res = self.client.post("http://httpbin.org/post")
-            .body("the exact body that is sent")
-            .send().unwrap();
+        let mut text = "".to_string();
+        var.read_to_string(&mut text);
 
-        println!("{:?}", res.text().unwrap());*/
+        println!("{}", text);
 
-        println!("{:?}", var);
-
-        "test".to_string()
+        text
     }
 }

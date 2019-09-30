@@ -1,19 +1,32 @@
 use std::thread;
 use crate::DataHandler;
 use std::sync::{Mutex, Arc};
+use regex::Regex;
 
 pub(crate) struct NetworkHandler {
+    client: reqwest::Client,
     target_address: String,
-    local_color: schackmotor::Color,
+    local_color: Arc<Mutex<Option<schackmotor::Color>>>,
     data_handler: Arc<Mutex<DataHandler>>,
+    score: (usize, usize), //number of times white has won, number of times black has won
+    draw_requested: Arc<Mutex<(bool, bool)>>, //you, the guy she tells you not to worry about/your opponent
+    rematch_requested: Arc<Mutex<(bool, bool)>> //you, the guy she tells you not to worry about/your opponent
 }
 
 impl NetworkHandler {
+    pub(crate) fn get_target_address(&self) -> String {
+        self.target_address.clone()
+    }
+
     pub(crate) fn new(target_address: String, data_handler: Arc<Mutex<DataHandler>>) -> Self {
         let mut out = NetworkHandler {
+            client: reqwest::Client::new(),
             target_address,
-            local_color: schackmotor::Color::White,
+            local_color: Arc::new(Mutex::new(None)),
             data_handler,
+            score: (0, 0),
+            draw_requested: Arc::new(Mutex::new((false, false))),
+            rematch_requested: Arc::new(Mutex::new((false, false)))
         };
 
         out.listen();
@@ -23,9 +36,18 @@ impl NetworkHandler {
 
     fn listen(&mut self) {
         let data_handler2 = self.data_handler.clone();
+        let local_color_ref = self.local_color.clone();
+        let request_draw_ref = self.draw_requested.clone();
+        let request_rematch_ref = self.rematch_requested.clone();
+        let address = self.target_address.clone();
 
-        thread::spawn(move || {
-            let server = tiny_http::Server::http("0.0.0.0:7878").unwrap();
+        thread::spawn( move || {
+            let server = tiny_http::Server::http(address).unwrap();
+            let regex_for_start_square = Regex::new("\"start_square\"(\\s)*:(\\s)*\"[a-h][1-8]\"").unwrap();
+            let regex_for_end_square = Regex::new("\"end_square\"(\\s)*:(\\s)*\"[a-h][1-8]\"").unwrap();
+            let regex_for_promotion = Regex::new("\"promote_to\"(\\s)*:(\\s)*\"[QRBN]\"").unwrap();
+            let regex_for_square_extraction = Regex::new("[a-h][1-8]").unwrap();
+            let regex_for_promotion_extraction = Regex::new("[QRBN]").unwrap();
 
             loop {
                 let mut request = match server.recv() {
@@ -35,75 +57,100 @@ impl NetworkHandler {
 
                 let mut request_text = "".to_string();
 
-                println!("{}", request.as_reader().read_to_string(&mut request_text).unwrap());
-
-                println!("Method: {}", request.method());
-                println!("Request: {}", request_text);
+                request.as_reader().read_to_string(&mut request_text).unwrap();
 
                 match request.method() {
-                    tiny_http::Method::Get => {
-                        if request_text.contains("\"requested_data\":\"gamestate\"") {
-                            let mut response =
-                                tiny_http::Response::from_string(
-                                    format!("{0}\"state\":\"{2}\"{1}", "{", "}",
-                                            match data_handler2.lock().unwrap().gameover {
-                                                schackmotor::GameState::Draw => { "draw" }
-                                                schackmotor::GameState::Checkmate(color) => {
-                                                    if color == schackmotor::Color::Black {
-                                                        "black-won"
-                                                    } else {
-                                                        "white-won"
-                                                    }
-                                                }
-                                                _ => { "in-progress" }
-                                            }
-                                    ));
-                            request.respond(response);
-                        } else if request_text.contains("\"requested_data\":\"current-turn\"") {
-                            let text = format!("{0}\"current_turn\":\"{2}\"{1}", "{", "}",
-                                               match data_handler2.lock().unwrap().board.get_current_player() {
-                                                   schackmotor::Color::White => { "white" }
-                                                   schackmotor::Color::Black => { "black" }
-                                               }
-                            );
+                    tiny_http::Method::Get => {}
+                    tiny_http::Method::Post => {
+                        let url = request.url();
+                        let mut response_body = "".to_string();
+                        let mut response_code = 0u32;
 
-                            let mut response = tiny_http::Response::from_string(text);
-                            request.respond(response);
-                        } else if request_text.contains("\"requested_data\":\"board\"") {
-                            let mutex_guard = data_handler2.lock().unwrap();
-                            let pieces = mutex_guard.board.get_pieces();
-                            let mut inner_string = pieces.iter().map(|piece|
-                                format!("{0}\"piece-type\":\"{2}\",\"color\":\"{3}\",\"position\":\"{4}\"{1}", "{", "}",
-                                        match piece.get_type() {
-                                            schackmotor::PieceType::Pawn => { "pawn" }
-                                            schackmotor::PieceType::King => { "king" }
-                                            schackmotor::PieceType::Queen => { "queen" }
-                                            schackmotor::PieceType::Rook => { "rook" }
-                                            schackmotor::PieceType::Bishop => { "bishop" }
-                                            schackmotor::PieceType::Knight => { "knight" }
-                                        }, match piece.get_color() {
-                                        schackmotor::Color::White => { "white" }
-                                        schackmotor::Color::Black => { "black" }
-                                    }, piece.get_position()));
-
-                            let mut total_string = inner_string.next().unwrap();
-                            for elem in inner_string {
-                                total_string = format!("{},{}", total_string, elem);
+                        if url == "/start-game" {
+                            if local_color_ref.lock().unwrap().is_none() {
+                                if request_text.contains("white") {
+                                    *local_color_ref.lock().unwrap() = Some(schackmotor::Color::Black);
+                                    response_body = "{\"accepted\":true}".to_string();
+                                    response_code = 200;
+                                } else if request_text.contains("black") {
+                                    *local_color_ref.lock().unwrap() = Some(schackmotor::Color::White);
+                                    response_body = "{\"accepted\":true}".to_string();
+                                    response_code = 200;
+                                } else {
+                                    response_body = "{\"accepted\":false}".to_string();
+                                    response_code = 400;
+                                }
                             }
+                        } else if url == "/move" {
+                            if regex_for_start_square.is_match(request_text.as_ref())
+                                && regex_for_end_square.is_match(request_text.as_ref()) {
+                                let start_square = regex_for_square_extraction.captures(
+                                    regex_for_start_square.captures(request_text.as_ref()).unwrap()
+                                        .get(0).unwrap().as_str()).unwrap().get(0).unwrap().as_str();
+                                let end_square = regex_for_square_extraction.captures(
+                                    regex_for_end_square.captures(request_text.as_ref()).unwrap()
+                                        .get(0).unwrap().as_str()).unwrap().get(0).unwrap().as_str();
+                                let res;
+                                if regex_for_promotion.is_match(request_text.as_ref()) {
+                                    let promotes_to = regex_for_promotion_extraction.captures(
+                                        regex_for_promotion.captures(request_text.as_ref())
+                                            .unwrap().get(0).unwrap().as_str()).unwrap()
+                                        .get(0).unwrap().as_str();
+                                    res = data_handler2.lock().unwrap().receive_move(format!("{}-{}={}", start_square, end_square, promotes_to));
+                                } else {
+                                    res = data_handler2.lock().unwrap().receive_move(format!("{}-{}", start_square, end_square));
+                                }
 
-                            let pieces_string = format!("{0}\"board\":[{2}]{1}", "{", "}", total_string);
-
-                            let mut response =
-                                tiny_http::Response::from_string(pieces_string);
-                            request.respond(response);
+                                match res {
+                                    Ok(_) => {
+                                        response_body = "{\"valid_move\":true}".to_string();
+                                        response_code = 200;
+                                    }
+                                    Err(_) => {
+                                        response_body = "{\"valid_move\":false}".to_string();
+                                        response_code = 400;
+                                    }
+                                }
+                            }
+                        } else if url == "/request-draw" {
+                            request_draw_ref.lock().unwrap().1 = true;
+                            response_body = format!("{0}\"draw_accepted\":{2}{1}", "{", "}", request_draw_ref.lock().unwrap().0);
+                            response_code = 200;
+                        } else if url == "/request-rematch" {
+                            request_rematch_ref.lock().unwrap().1 = true;
+                            response_body = format!("{0}\"draw_accepted\":{2}{1}", "{", "}", request_rematch_ref.lock().unwrap().0);
+                            response_code = 200;
                         }
+
+                        let mut response = tiny_http::Response::from_string(response_body);
+                        response = response.with_status_code(tiny_http::StatusCode::from(response_code));
+
+                        request.respond(response).unwrap();
                     }
-                    tiny_http::Method::Post => {}
                     _ => {
-                        request.respond(tiny_http::Response::from_string("prutt"));
+                        let mut res = tiny_http::Response::from_string("");
+                        res = res.with_status_code(tiny_http::StatusCode::from(405));
+                        request.respond(res).unwrap();
                     }
                 }
             }
         });
+    }
+
+    pub(crate) fn send(&self, url: &str, message: String) -> String {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(reqwest::header::HOST, reqwest::header::HeaderValue::from_bytes(url.as_ref()).unwrap());
+        headers.insert(reqwest::header::CONTENT_TYPE, reqwest::header::HeaderValue::from_bytes(b"text/json").unwrap());
+        let var = self.client.post(url).headers(headers).send();
+
+        /*let mut res = self.client.post("http://httpbin.org/post")
+            .body("the exact body that is sent")
+            .send().unwrap();
+
+        println!("{:?}", res.text().unwrap());*/
+
+        println!("{:?}", var);
+
+        "test".to_string()
     }
 }

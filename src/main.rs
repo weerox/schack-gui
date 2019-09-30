@@ -9,6 +9,7 @@ use std::path;
 use schackmotor::{Board, PieceType, Position};
 use crate::network::NetworkHandler;
 use std::sync::{Mutex, Arc};
+use std::ops::Deref;
 
 const GRID_SIZE: (i16, i16) = (8, 8);
 const GRID_CELL_SIZE: (i16, i16) = (45, 45);
@@ -114,9 +115,11 @@ impl InputHandler {
         self.clicked_tile_2 = None;
     }
 
-    fn clicked_at(&mut self, ctx: &mut Context, button: MouseButton, x: f32, y: f32, data_handler: &mut DataHandler, graphics_handler: &mut GraphicsHandler) {
+    fn clicked_at(&mut self, ctx: &mut Context, button: MouseButton, x: f32, y: f32,
+                  data_handler: &mut DataHandler, graphics_handler: &mut GraphicsHandler, network_handler: &NetworkHandler) {
         if button == MouseButton::Left && self.clicked_tile_2.is_none() {
-            let clicked_position: schackmotor::Position = GridPosition { x: (x / GRID_CELL_SIZE.0 as f32).floor() as i32, y: (y / GRID_CELL_SIZE.1 as f32).floor() as i32 }.into();
+            let clicked_position: schackmotor::Position = GridPosition { x: (x / GRID_CELL_SIZE.0 as f32).floor() as i32,
+                y: (y / GRID_CELL_SIZE.1 as f32).floor() as i32 }.into();
 
             if self.clicked_tile.is_none() {
                 if let Some(moves) = data_handler.moves_from_position(clicked_position){
@@ -142,7 +145,7 @@ impl InputHandler {
                     if promotes {
                         self.clicked_tile_2 = Some(clicked_position);
                     } else {
-                        self.forward_move(ctx, format!("{}-{}", self.clicked_tile.unwrap(), clicked_position), data_handler, graphics_handler);
+                        self.forward_move(ctx, format!("{}-{}", self.clicked_tile.unwrap(), clicked_position), data_handler, graphics_handler, network_handler);
 
                     }
                 } else {
@@ -153,28 +156,29 @@ impl InputHandler {
         }
     }
 
-    fn key_pressed(&mut self, ctx: &mut Context, keycode: ggez::event::KeyCode, data_handler: &mut DataHandler, graphics_handler: &mut GraphicsHandler) {
+    fn key_pressed(&mut self, ctx: &mut Context, keycode: ggez::event::KeyCode,
+                   data_handler: &mut DataHandler, graphics_handler: &mut GraphicsHandler, network_handler: &NetworkHandler) {
         if self.clicked_tile_2.is_some() {
             match keycode {
                 KeyCode::Q => {
-                    self.forward_move(ctx, format!("{}-{}=Q", self.clicked_tile.unwrap(), self.clicked_tile_2.unwrap()), data_handler, graphics_handler);
+                    self.forward_move(ctx, format!("{}-{}=Q", self.clicked_tile.unwrap(), self.clicked_tile_2.unwrap()), data_handler, graphics_handler, network_handler);
                 }
                 KeyCode::R => {
-                    self.forward_move(ctx, format!("{}-{}=R", self.clicked_tile.unwrap(), self.clicked_tile_2.unwrap()), data_handler, graphics_handler);
+                    self.forward_move(ctx, format!("{}-{}=R", self.clicked_tile.unwrap(), self.clicked_tile_2.unwrap()), data_handler, graphics_handler, network_handler);
                 }
                 KeyCode::B => {
-                    self.forward_move(ctx, format!("{}-{}=B", self.clicked_tile.unwrap(), self.clicked_tile_2.unwrap()), data_handler, graphics_handler);
+                    self.forward_move(ctx, format!("{}-{}=B", self.clicked_tile.unwrap(), self.clicked_tile_2.unwrap()), data_handler, graphics_handler, network_handler);
                 }
                 KeyCode::N => {
-                    self.forward_move(ctx, format!("{}-{}=N", self.clicked_tile.unwrap(), self.clicked_tile_2.unwrap()), data_handler, graphics_handler);
+                    self.forward_move(ctx, format!("{}-{}=N", self.clicked_tile.unwrap(), self.clicked_tile_2.unwrap()), data_handler, graphics_handler, network_handler);
                 }
                 _ => {}
             }
         }
     }
 
-    fn forward_move(&mut self, ctx: &mut Context, mov: String, data_handler: &mut DataHandler, graphics_handler: &mut GraphicsHandler) {
-        data_handler.take_move(mov);
+    fn forward_move(&mut self, ctx: &mut Context, mov: String, data_handler: &mut DataHandler, graphics_handler: &mut GraphicsHandler, network_handler: &NetworkHandler) {
+        data_handler.take_move(mov, network_handler);
         graphics_handler.update_board(data_handler, ctx);
         self.reset_clicked_squares();
     }
@@ -183,13 +187,15 @@ impl InputHandler {
 struct DataHandler {
     board: Board,
     gameover: schackmotor::GameState,
+    move_made: bool
 }
 
 impl DataHandler {
     fn new(board: Board) -> Self {
         DataHandler {
             board,
-            gameover: schackmotor::GameState::Normal
+            gameover: schackmotor::GameState::Normal,
+            move_made: false
         }
     }
 
@@ -197,11 +203,22 @@ impl DataHandler {
         self.gameover = self.board.get_game_state();
     }
 
-    fn take_move(&mut self, mov: String) {
-        self.board.take_move(mov);
-        self.update_game_state();
+    fn take_move<T: Deref<Target = NetworkHandler>>(&mut self, mov: String, network_handler: T) -> Result<(), String> {
+        self.receive_move(mov.clone())?;
 
         //Transmit the move to the other client
+        network_handler.send("http://192.168.0.48:7878/move", mov);
+        //network_handler.send(format!("http://{}/move", network_handler.get_target_address()).as_str(), mov);
+
+        Ok(())
+    }
+
+    fn receive_move(&mut self, mov: String) -> Result<(), String> {
+        self.board.take_move(mov.clone())?;
+        self.update_game_state();
+        self.move_made = true;
+
+        Ok(())
     }
 
     fn moves_from_position(&self, position: schackmotor::Position) -> Option<Vec<(Position, bool)>> {
@@ -336,12 +353,12 @@ impl GraphicsHandler {
                                                                                    (SCREEN_SIZE.0 - gg_dimensions.1 as f32) / 2f32 as f32,
                                                                                    gg_dimensions.0 as f32 + 16.0, gg_dimensions.1 as f32),
                                                                [1.0, 1.0, 1.0, 1.0].into())?;
-            graphics::draw(ctx, &background_box, DrawParam::default());
+            graphics::draw(ctx, &background_box, DrawParam::default())?;
             graphics::draw(ctx, &gg_text, DrawParam::default().color([0.0, 0.0, 0.0, 1.0].into())
                 .dest(ggez::mint::Point2 {
                     x: (SCREEN_SIZE.0 - gg_dimensions.0 as f32) / 2f32 as f32,
                     y: (SCREEN_SIZE.0 - gg_dimensions.1 as f32) / 2f32 as f32,
-                }));
+                }))?;
         }
 
         Ok(())
@@ -353,6 +370,13 @@ impl GraphicsHandler {
 
     fn clear_marks(&mut self) {
         self.marks.clear();
+    }
+
+    fn update(&mut self, data_handler: &mut DataHandler, ctx: &mut Context) {
+        if data_handler.move_made {
+            data_handler.move_made = false;
+            self.update_board(data_handler, ctx);
+        }
     }
 }
 
@@ -385,8 +409,8 @@ impl GameState {
 }
 
 impl event::EventHandler for GameState {
-    fn update(&mut self, _ctx: &mut Context) -> GameResult {
-
+    fn update(&mut self, ctx: &mut Context) -> GameResult {
+        self.graphics_handler.update(&mut self.data_handler.lock().unwrap(), ctx);
 
         Ok(())
     }
@@ -400,12 +424,12 @@ impl event::EventHandler for GameState {
     }
 
     fn mouse_button_up_event(&mut self, ctx: &mut Context, button: MouseButton, x: f32, y: f32) {
-        self.input_handler.clicked_at(ctx, button, x, y, &mut self.data_handler.lock().unwrap(), &mut self.graphics_handler);
+        self.input_handler.clicked_at(ctx, button, x, y, &mut self.data_handler.lock().unwrap(), &mut self.graphics_handler, &self.network_handler);
 
     }
 
     fn key_down_event(&mut self, ctx: &mut Context, keycode: ggez::event::KeyCode, _keymod: ggez::event::KeyMods, _repeat: bool) {
-        self.input_handler.key_pressed(ctx, keycode, &mut self.data_handler.lock().unwrap(), &mut self.graphics_handler);
+        self.input_handler.key_pressed(ctx, keycode, &mut self.data_handler.lock().unwrap(), &mut self.graphics_handler, &self.network_handler);
     }
 }
 

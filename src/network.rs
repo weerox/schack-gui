@@ -46,7 +46,7 @@ impl NetworkHandler {
             let server = tiny_http::Server::http("0.0.0.0:7878").unwrap();
             let regex_for_start_square = Regex::new("\"start_square\"(\\s)*:(\\s)*\"[a-h][1-8]\"").unwrap();
             let regex_for_end_square = Regex::new("\"end_square\"(\\s)*:(\\s)*\"[a-h][1-8]\"").unwrap();
-            let regex_for_promotion = Regex::new("\"promote_to\"(\\s)*:(\\s)*\"[QRBN]\"").unwrap();
+            let regex_for_promotion = Regex::new("\"promotes_to\"(\\s)*:(\\s)*\"[QRBN]\"").unwrap();
             let regex_for_square_extraction = Regex::new("[a-h][1-8]").unwrap();
             let regex_for_promotion_extraction = Regex::new("[QRBN]").unwrap();
 

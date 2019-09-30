@@ -4,12 +4,13 @@ use ggez::event;
 use ggez::graphics::{self, DrawParam, DrawMode};
 use ggez::{Context, GameResult};
 use ggez::event::{MouseButton, KeyCode};
-use std::{env};
+use std::{env, fmt};
 use std::path;
 use schackmotor::{Board, PieceType, Position};
 use crate::network::NetworkHandler;
 use std::sync::{Mutex, Arc};
 use std::ops::Deref;
+use std::fmt::{Formatter};
 
 const GRID_SIZE: (i16, i16) = (8, 8);
 const GRID_CELL_SIZE: (i16, i16) = (45, 45);
@@ -66,6 +67,47 @@ impl Tile {
     fn draw(&self, ctx: &mut Context) -> GameResult<()> {
         let rectangle = graphics::Mesh::new_rectangle(ctx, graphics::DrawMode::fill(), self.position.into(), self.color)?;
         graphics::draw(ctx, &rectangle, (ggez::mint::Point2 { x: 0.0, y: 0.0 }, ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NotatedMove{
+    start_position: String,
+    end_position: String,
+    promotes_to: Option<String>
+}
+
+impl fmt::Display for NotatedMove {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        match &self.promotes_to {
+            Some(s) => {
+                write!(f, "{}-{}={}", self.start_position, self.end_position, s)
+            }
+            None => {
+                write!(f, "{}-{}", self.start_position, self.end_position)
+            }
+        }
+    }
+}
+
+impl NotatedMove {
+    fn new(start_position: String, end_position: String, promotes_to: Option<String>) -> Self {
+        NotatedMove {
+            start_position,
+            end_position,
+            promotes_to
+        }
+    }
+
+    fn jsonify(&self) -> String {
+        match &self.promotes_to {
+            Some(s) => {
+                format!("{0}\"start_square\":\"{2}\",\"end_square\":\"{3}\",\"promotes_to\":\"{4}\"{1}", "{", "}", self.start_position, self.end_position, s)
+            }
+            None => {
+                format!("{0}\"start_square\":\"{2}\",\"end_square\":\"{3}\"{1}", "{", "}", self.start_position, self.end_position)
+            }
+        }
     }
 }
 
@@ -145,7 +187,9 @@ impl InputHandler {
                     if promotes {
                         self.clicked_tile_2 = Some(clicked_position);
                     } else {
-                        self.forward_move(ctx, format!("{}-{}", self.clicked_tile.unwrap(), clicked_position), data_handler, graphics_handler, network_handler);
+                        self.forward_move(ctx, NotatedMove::new(
+                            self.clicked_tile.unwrap().to_string(), clicked_position.to_string(), None)
+                                          , data_handler, graphics_handler, network_handler);
 
                     }
                 } else {
@@ -161,23 +205,31 @@ impl InputHandler {
         if self.clicked_tile_2.is_some() {
             match keycode {
                 KeyCode::Q => {
-                    self.forward_move(ctx, format!("{}-{}=Q", self.clicked_tile.unwrap(), self.clicked_tile_2.unwrap()), data_handler, graphics_handler, network_handler);
+                    self.forward_move(ctx, NotatedMove::new(
+                        self.clicked_tile.unwrap().to_string(), self.clicked_tile_2.unwrap().to_string(), Some("Q".to_string())),
+                                      data_handler, graphics_handler, network_handler);
                 }
                 KeyCode::R => {
-                    self.forward_move(ctx, format!("{}-{}=R", self.clicked_tile.unwrap(), self.clicked_tile_2.unwrap()), data_handler, graphics_handler, network_handler);
+                    self.forward_move(ctx, NotatedMove::new(
+                        self.clicked_tile.unwrap().to_string(), self.clicked_tile_2.unwrap().to_string(), Some("R".to_string())),
+                                      data_handler, graphics_handler, network_handler);
                 }
                 KeyCode::B => {
-                    self.forward_move(ctx, format!("{}-{}=B", self.clicked_tile.unwrap(), self.clicked_tile_2.unwrap()), data_handler, graphics_handler, network_handler);
+                    self.forward_move(ctx, NotatedMove::new(
+                        self.clicked_tile.unwrap().to_string(), self.clicked_tile_2.unwrap().to_string(), Some("B".to_string())),
+                                      data_handler, graphics_handler, network_handler);
                 }
                 KeyCode::N => {
-                    self.forward_move(ctx, format!("{}-{}=N", self.clicked_tile.unwrap(), self.clicked_tile_2.unwrap()), data_handler, graphics_handler, network_handler);
+                    self.forward_move(ctx, NotatedMove::new(
+                        self.clicked_tile.unwrap().to_string(), self.clicked_tile_2.unwrap().to_string(), Some("N".to_string())),
+                                      data_handler, graphics_handler, network_handler);
                 }
                 _ => {}
             }
         }
     }
 
-    fn forward_move(&mut self, ctx: &mut Context, mov: String, data_handler: &mut DataHandler, graphics_handler: &mut GraphicsHandler, network_handler: &NetworkHandler) {
+    fn forward_move(&mut self, ctx: &mut Context, mov: NotatedMove, data_handler: &mut DataHandler, graphics_handler: &mut GraphicsHandler, network_handler: &NetworkHandler) {
         data_handler.take_move(mov, network_handler);
         graphics_handler.update_board(data_handler, ctx);
         self.reset_clicked_squares();
@@ -203,18 +255,20 @@ impl DataHandler {
         self.gameover = self.board.get_game_state();
     }
 
-    fn take_move<T: Deref<Target = NetworkHandler>>(&mut self, mov: String, network_handler: T) -> Result<(), String> {
+    fn take_move<T: Deref<Target = NetworkHandler>>(&mut self, mov: NotatedMove, network_handler: T) -> Result<(), String> {
         self.receive_move(mov.clone())?;
 
+        println!("{}\n{}", mov.jsonify(), network_handler.get_target_address());
+
         //Transmit the move to the other client
-        network_handler.send("http://192.168.0.48:7878/move", mov);
-        //network_handler.send(format!("http://{}/move", network_handler.get_target_address()).as_str(), mov);
+        //network_handler.send("http://192.168.0.48:7878/move", mov);
+        network_handler.send(format!("http://{}/move", network_handler.get_target_address()).as_str(), mov.jsonify());
 
         Ok(())
     }
 
-    fn receive_move(&mut self, mov: String) -> Result<(), String> {
-        self.board.take_move(mov.clone())?;
+    fn receive_move(&mut self, mov: NotatedMove) -> Result<(), String> {
+        self.board.take_move(mov.to_string())?;
         self.update_game_state();
         self.move_made = true;
 
@@ -394,7 +448,7 @@ impl GameState {
 
         let data_handler = Arc::new(Mutex::new(DataHandler::new(board)));
         let graphics_handler = GraphicsHandler::new(&data_handler.lock().unwrap(), ctx);
-        let network_handler = NetworkHandler::new("127.0.0.1:7878".to_string(), data_handler.clone());
+        let network_handler = NetworkHandler::new("192.168.0.48:7878".to_string(), data_handler.clone());
 
         let mut state = GameState {
             data_handler,
